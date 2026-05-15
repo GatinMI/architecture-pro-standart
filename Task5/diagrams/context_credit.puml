@@ -1,0 +1,59 @@
+@startuml context_credit
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/refs/heads/master/C4_Context.puml
+
+title Диаграмма контекста — Онлайн-подача заявок на кредит, банк «Стандарт»
+
+Person(newClient, "Новый клиент", "Потенциальный клиент банка без учётной записи в интернет-банке.\nМожет просматривать кредиты и подавать заявку через сайт.\nПри указании паспортных данных — мгновенное решение")
+Person(existingClient, "Существующий клиент", "Клиент банка с доступом к интернет-банку.\nВидит предодобренные предложения,\nподаёт заявку с СМС-подтверждением")
+Person(branchManager, "Менеджер отделения\n(фронт-офис)", "Сотрудник отделения банка.\nПодаёт заявку на кредит через АБС.\nМожет продолжить работу с заявкой,\nподанной клиентом через сайт")
+Person(backOfficeCredit, "Менеджер бэк-офиса\n(кредиты)", "Сотрудник управления кредитных продуктов.\nОбрабатывает заявки в Кредитном конвейере.\nПринимает решение о выдаче кредита")
+
+System(creditSystem, "Сервис кредитов\n(новый)", "Новый микросервис на Java Spring Boot.\nПриём заявок с сайта и интернет-банка,\nуправление предодобреными предложениями,\nночной batch-расчёт скоринга,\nСМС-подтверждение и уведомления,\nинтеграция с Кредитным конвейером\nи системой скоринга")
+
+System(absAdapter, "Адаптер АБС\n(расширение)", "Java-сервис вне контура АБС.\nРасширен для кредитных заявок.\nМост между Kafka и Oracle БД АБС.\nЗапись заявок в БД, чтение результатов.\nНе требует изменений в Delphi/PL-SQL")
+
+System(internetBank, "Интернет-банк", "Клиент-серверная система на ASP.NET MVC 4.5,\n.NET Framework 4.5, MS SQL.\nМонолит на платформе подрядчика.\nДополняется новым модулем кредитов\n(React.js SPA)")
+System(abs, "Автоматизированная\nбанковская система (АБС)", "Десктоп-клиент на Delphi, СУБД Oracle,\nлогика на PL/SQL.\nОсновная система учёта операций.\nХранит предварительные заявки\nиз онлайн-каналов (через Адаптер)")
+System(creditConveyor, "Кредитный конвейер", "BPM-система Camunda + Oracle.\nОбработка заявок на кредит.\nПолучает предодобренные заявки\nиз Kafka (новый канал)\nи обычные заявки из АБС\n(ежедневная синхронизация БД)")
+System(scoringSystem, "Система кредитного\nскоринга", "Python + Flask REST API + PostgreSQL.\nML-модель для оценки кредитного риска.\nОнлайн-вызовы от Сервиса кредитов.\nНочью — batch-расчёт предодобренных\nпредложений")
+System(website, "Сайт банка", "Собственная разработка: PHP + React.js.\nДополнен каталогом кредитов\nи формой подачи заявки\nс мгновенным решением")
+
+System_Ext(creditBureau, "Бюро кредитных\nисторий", "Внешняя система.\nПредоставляет данные о кредитной\nистории клиента через REST API.\nИспользуется системой скоринга")
+System_Ext(smsGateway, "СМС-шлюз\nтелеком-оператора", "Внешний шлюз отправки СМС.\nСМС-коды подтверждения\nи уведомления о статусе заявки")
+
+Rel(newClient, website, "Просматривает кредиты\nи подаёт заявку\n(с паспортными данными\nдля мгновенного решения)", "HTTPS")
+Rel(existingClient, internetBank, "Просматривает кредиты,\nпредодобренные предложения\nи подаёт заявку", "HTTPS")
+
+Rel(website, creditSystem, "Передаёт заявку на кредит,\nзапрашивает условия", "HTTPS/REST")
+Rel(internetBank, creditSystem, "Передаёт заявку на кредит,\nзапрашивает условия и\nпредодобренные предложения", "HTTPS/REST")
+
+Rel(creditSystem, scoringSystem, "Онлайн-скоринг для заявок,\nночной batch-расчёт\nпредодобренных предложений", "HTTPS/REST")
+Rel(scoringSystem, creditBureau, "Запрос кредитной истории\nклиента для скоринга", "HTTPS/REST")
+
+Rel(creditSystem, creditConveyor, "Передача предодобренных\nзаявок напрямую через Kafka\n(в обход ежедневной\nсинхронизации БД)", "Kafka\n(асинхронно)")
+Rel(creditSystem, absAdapter, "Передача заявок для записи\nв АБС, получение результатов", "Kafka\n(асинхронно)")
+Rel(absAdapter, abs, "Запись заявок в Oracle БД,\nчтение результатов\nчерез JDBC", "JDBC")
+
+Rel(creditConveyor, abs, "Ежедневная синхронизация\nобычных заявок через БД\n(существующий процесс)", "БД\n(раз в сутки)")
+
+Rel(creditSystem, smsGateway, "Отправка СМС-кодов\nподтверждения и уведомлений\nо статусе заявки", "SMPP/HTTP")
+
+Rel(branchManager, abs, "Подаёт заявку на кредит,\nпродолжает работу с заявкой\nс сайта (видит в АБС)", "Десктоп")
+Rel(backOfficeCredit, creditConveyor, "Обрабатывает заявки\nв Кредитном конвейере,\nпринимает решение", "HTTPS")
+
+Lay_R(newClient, existingClient)
+Lay_D(newClient, website)
+Lay_D(existingClient, internetBank)
+Lay_R(website, internetBank)
+Lay_D(website, creditSystem)
+Lay_R(creditSystem, scoringSystem)
+Lay_R(scoringSystem, creditBureau)
+Lay_D(creditSystem, creditConveyor)
+Lay_R(creditConveyor, abs)
+Lay_D(creditSystem, absAdapter)
+Lay_R(absAdapter, abs)
+Lay_D(abs, branchManager)
+Lay_D(creditConveyor, backOfficeCredit)
+Lay_R(creditSystem, smsGateway)
+
+@enduml

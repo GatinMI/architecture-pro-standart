@@ -1,0 +1,66 @@
+@startuml containers_call_center
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/refs/heads/master/C4_Container.puml
+
+title Диаграмма контейнеров — Доступ кол-центров к ставкам по депозитам, банк «Стандарт»
+
+Person(callCenterAgent, "Оператор кол-центра\nбанка", "Консультирует клиентов,\nвидит ставки в интерфейсе")
+Person(partnerCallCenterAgent, "Оператор партнёрского\nкол-центра", "Консультирует клиентов,\nвидит ставки из загруженных файлов")
+Person(backOfficeDeposit, "Менеджер бэк-офиса\n(депозиты)", "Обновляет ставки в АБС")
+
+
+System_Boundary(depositServiceBoundary, "Сервис депозитов (новый)") {
+    Container(apiGateway, "API Gateway", "Java Spring Boot", "Единая точка входа.\nМаршрутизация, аутентификация\n(API-ключи/OAuth2), rate limiting")
+    Container(rateService, "Сервис ставок", "Java Spring Boot", "CRUD ставок по депозитам.\nКэш базовых и персонализированных\nставок. Обновление из Kafka.\nEndpoint GET /api/v1/rates\nдля системы кол-центра")
+    Container(exportService, "Сервис экспорта ставок\n(новый)", "Java Spring Boot +\nJSch (SFTP-клиент)", "Фоновый процесс.\nФормирование CSV-файла\nсо ставками. Загрузка\nна SFTP-сервер по расписанию\nили при изменении ставок")
+    ContainerDb(depositDb, "PostgreSQL", "PostgreSQL", "База данных Сервиса депозитов.\nТаблицы: ставки, заявки,\nкэш ставок")
+    Container(integrationAdapter, "Интеграционный адаптер", "Java Spring Boot +\nSpring Kafka", "Получение ставок и заявок\nиз Kafka. Webhook-уведомления\nсистеме кол-центра\nоб изменении ставок")
+}
+
+System_Boundary(callCenterBoundary, "Система кол-центра банка") {
+    Container(callCenterUI, "UI оператора", "React.js", "Интерфейс оператора кол-центра.\nОтображение заявок с сайта\nи актуальных ставок по депозитам\n(новый UI-компонент)")
+    Container(callCenterBackend, "Бэкенд кол-центра", "Java Spring Boot", "REST-клиент к Сервису депозитов\n(GET /api/v1/rates).\nЛокальный кэш ставок (TTL 15 мин).\nEndpoint для webhook-уведомлений\nоб изменении ставок")
+    ContainerDb(callCenterDb, "PostgreSQL", "PostgreSQL", "База данных кол-центра.\nЗаявки, обращения,\nкэш ставок (новый)")
+}
+
+System_Boundary(sftpBoundary, "SFTP-сервер (новый, DMZ)") {
+    Container(sftpServer, "SFTP-сервер", "OpenSSH SFTP", "Сервер в DMZ-зоне.\nХранит CSV-файлы со ставками.\nАутентификация по SSH-ключам.\nОграничение по IP-адресам.\nМониторинг и логирование")
+    Container(sftpStorage, "Хранилище файлов", "Файловая система", "CSV-файлы со ставками.\nФормат: версия, дата,\nпродукт, срок, ставка.\nБез чувствительных данных")
+}
+
+System_Boundary(absBoundary, "АБС") {
+    Container(absDesktop, "Десктоп-клиент", "Delphi", "Интерфейс бэк-офиса.\nРабота со ставками\nв Oracle БД")
+    ContainerDb(absDb, "Oracle БД", "Oracle + PL/SQL", "Источник ставок.\nСтавки обновляются\nбэк-офисом депозитов\nна основе данных\nот бэк-офиса кредитов")
+}
+
+System_Ext(partnerCallCenter, "Система партнёрского\nкол-центра", "Внешняя система.\nСкачивает CSV-файлы\nс SFTP-сервера.\nЗагружает данные\nв свою БД.\nОтображает ставки\nоператорам")
+
+
+Rel(callCenterAgent, callCenterUI, "Работает с заявками\nи просматривает ставки", "HTTPS")
+Rel(callCenterUI, callCenterBackend, "Запрос ставок\nдля отображения", "внутренний\nREST")
+Rel(callCenterBackend, apiGateway, "GET /api/v1/rates\nзапрос актуальных ставок", "HTTPS/REST\n(TLS, API-ключ)")
+Rel(apiGateway, rateService, "Маршрутизация\nзапроса ставок", "внутрипроцессный\n/ REST")
+Rel(rateService, depositDb, "Чтение кэша ставок", "JDBC")
+
+Rel(integrationAdapter, rateService, "Обновление ставок\nиз Kafka, webhook-\nуведомления", "внутрипроцессный\n/ REST")
+
+Rel(exportService, rateService, "Чтение актуальных\nставок для экспорта", "внутрипроцессный\n/ REST")
+Rel(exportService, sftpServer, "Загрузка CSV-файла\nсо ставками", "SFTP\n(SSH)")
+Rel(sftpServer, sftpStorage, "Хранение CSV-файлов", "файловая\nсистема")
+
+Rel(partnerCallCenter, sftpServer, "Скачивание CSV-файлов\nпо расписанию", "SFTP\n(SSH-ключ)")
+Rel(partnerCallCenterAgent, partnerCallCenter, "Просмотр ставок\nиз загруженных данных", "внутренний\nдоступ")
+
+Rel(callCenterBackend, callCenterDb, "Кэширование ставок\nлокально (TTL 15 мин)", "JDBC")
+
+Rel(backOfficeDeposit, absDesktop, "Обновляет ставки", "Десктоп")
+Rel(absDesktop, absDb, "Запись ставок\nв Oracle БД", "прямое\nподключение")
+
+Lay_R(callCenterAgent, partnerCallCenterAgent)
+Lay_D(callCenterAgent, callCenterBoundary)
+Lay_R(callCenterBoundary, depositServiceBoundary)
+Lay_D(depositServiceBoundary, sftpBoundary)
+Lay_R(sftpBoundary, partnerCallCenter)
+Lay_D(callCenterBoundary, absBoundary)
+Lay_D(sftpBoundary, backOfficeDeposit)
+
+@enduml

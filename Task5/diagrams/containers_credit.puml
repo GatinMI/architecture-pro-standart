@@ -1,0 +1,103 @@
+@startuml containers_credit
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/refs/heads/master/C4_Container.puml
+
+title Диаграмма контейнеров — Онлайн-подача заявок на кредит, банк «Стандарт»
+
+
+Person(newClient, "Новый клиент", "Потенциальный клиент без\nучётной записи")
+Person(existingClient, "Существующий клиент", "Клиент с доступом\nк интернет-банку")
+Person(branchManager, "Менеджер отделения\n(фронт-офис)", "Подаёт заявку через АБС,\nпродолжает работу с заявкой\nс сайта")
+Person(backOfficeCredit, "Менеджер бэк-офиса\n(кредиты)", "Обрабатывает заявки\nв Кредитном конвейере")
+
+
+System_Boundary(internetBankBoundary, "Интернет-банк") {
+    Container(internetBankMonolith, "Монолит интернет-банка", "ASP.NET MVC 4.5,\n.NET Framework 4.5,\nMS SQL", "Существующая система на платформе\nподрядчика. Авторизация, платежи,\nтекущие счета. Ядро СМС-функционала")
+    Container(creditModule, "Модуль кредитов (новый)", "React.js SPA", "Новый интерфейс для работы\nс кредитами. Каталог кредитов,\nпредодобренные предложения,\nформа заявки, ввод СМС-кода,\nстатус заявки.\nВстраивается через iframe")
+}
+
+System_Boundary(creditServiceBoundary, "Сервис кредитов (новый)") {
+    Container(creditApiGateway, "API Gateway", "Java Spring Boot", "Единая точка входа.\nМаршрутизация запросов,\nаутентификация, rate limiting")
+    Container(offerService, "Сервис предодобренных\nпредложений", "Java Spring Boot", "Управление предодобреными\nпредложениями. Ночной batch-\nрасчёт скоринга. Кэш\nпредложений в PostgreSQL")
+    Container(creditAppService, "Сервис кредитных заявок", "Java Spring Boot", "Жизненный цикл кредитной\nзаявки: создание, валидация\nСМС-кода, смена статуса,\nуведомления")
+    Container(scoringClient, "Клиент системы скоринга", "Java Spring Boot\n+ REST Client", "REST-клиент к системе\nскоринга. Онлайн-вызовы\nдля мгновенных решений\nи упрощённого повторного\nскоринга. Rate limiting")
+    ContainerDb(creditDb, "PostgreSQL", "PostgreSQL", "База данных Сервиса кредитов.\nТаблицы: кредитные заявки,\nпредодобренные предложения,\nСМС-коды, кэш условий\nкредитов из Кредитного\nконвейера")
+    Container(creditIntegration, "Интеграционный адаптер", "Java Spring Boot +\nSpring Kafka", "Асинхронная интеграция\nс АБС и Кредитным конвейером\nчерез Kafka. REST-клиент\nк СМС-шлюзу")
+    Container(batchProcessor, "Batch-процессор\n(ночной расчёт)", "Java Spring Batch", "Ночной batch-процесс\n(01:00–05:00). Перебор\nактивных клиентов, вызов\nскоринга, сохранение\nпредодобренных предложений")
+}
+
+System_Boundary(absAdapterBoundary, "Адаптер АБС (расширение, вне контура АБС)") {
+    Container(kafkaAdapter, "Адаптер Kafka → Oracle", "Java Spring Boot +\nJDBC + Spring Kafka", "Расширен для кредитных заявок.\nКонсьюмер: получение заявок\nиз Kafka и запись в Oracle БД.\nПродюсер: чтение результатов\nи отправка в Kafka.\nНовые таблицы для кредитных\nзаявок из онлайн-каналов")
+}
+
+System_Boundary(absBoundary, "Автоматизированная банковская система (АБС)") {
+    Container(absDesktop, "Десктоп-клиент", "Delphi", "Интерфейс фронт-офиса\nи бэк-офиса. Менеджер\nотделения видит заявки\nиз онлайн-каналов в новых\nтаблицах Oracle БД")
+    ContainerDb(absDb, "Oracle БД", "Oracle + PL/SQL", "Основная БД банка.\nДополнена таблицами\nкредитных заявок\nиз онлайн-каналов.\nЕжедневная синхронизация\nс Кредитным конвейером")
+}
+
+System_Boundary(creditConveyorBoundary, "Кредитный конвейер") {
+    Container(camundaEngine, "Camunda Engine", "Camunda BPM + Java", "BPM-движок. Обработка\nкредитных заявок.\nНовый Kafka-consumer для\nпредодобренных заявок\nиз Сервиса кредитов\n(в обход ежедневной\nсинхронизации БД)")
+    ContainerDb(conveyorDb, "Oracle БД", "Oracle", "База данных Кредитного\nконвейера. Заявки,\nномера платежей к\nкредитным договорам.\nЕжедневная синхронизация\nс АБС через БД")
+}
+
+System_Boundary(scoringBoundary, "Система кредитного скоринга") {
+    Container(scoringApi, "REST API", "Python + Flask", "REST API системы скоринга.\nML-модель для оценки\nкредитного риска.\nОнлайн-вызовы от Сервиса\nкредитов. Горизонтальное\nмасштабирование")
+    ContainerDb(scoringDb, "PostgreSQL", "PostgreSQL", "База данных скоринга.\nML-модели, история\nскоринговых оценок")
+}
+
+Container(website, "Сайт банка", "PHP + React.js", "Существующий сайт.\nДополнен каталогом кредитов\nи формой подачи заявки\nс мгновенным решением")
+System_Ext(creditBureau, "Бюро кредитных\nисторий", "Внешняя REST API система.\nДанные о кредитной истории")
+System_Ext(smsGateway, "СМС-шлюз\nтелеком-оператора", "Внешний SMPP/HTTP шлюз.\nСМС-коды и уведомления")
+
+
+Rel(newClient, website, "Просматривает кредиты\nи подаёт заявку", "HTTPS")
+Rel(existingClient, creditModule, "Работает с кредитами\nчерез новый модуль", "HTTPS")
+
+Rel(creditModule, creditApiGateway, "Запросы к Сервису кредитов:\nусловия, предодобренные,\nзаявки, СМС-код", "HTTPS/REST")
+Rel(creditModule, internetBankMonolith, "Делегирование авторизации\nи получение данных клиента", "внутренний\nвызов")
+
+Rel(website, creditApiGateway, "Запрос условий кредитов,\nпередача заявки", "HTTPS/REST")
+
+Rel(creditApiGateway, offerService, "Запрос предодобренных\nпредложений", "внутрипроцессный\n/ REST")
+Rel(creditApiGateway, creditAppService, "Создание заявки,\nвалидация СМС-кода", "внутрипроцессный\n/ REST")
+Rel(creditApiGateway, scoringClient, "Онлайн-скоринг\nдля мгновенных решений", "внутрипроцессный\n/ REST")
+
+Rel(offerService, creditDb, "Чтение/запись\nпредодобренных предложений", "JDBC")
+Rel(creditAppService, creditDb, "Чтение/запись заявок,\nСМС-кодов", "JDBC")
+
+Rel(scoringClient, scoringApi, "Вызов скоринга:\nмгновенное решение,\nупрощённый повторный\nскоринг", "HTTPS/REST")
+Rel(batchProcessor, scoringApi, "Ночной batch-расчёт\nскоринга для\nпредодобренных\nпредложений", "HTTPS/REST")
+Rel(scoringApi, scoringDb, "ML-модели,\nданные для оценки", "JDBC")
+Rel(scoringApi, creditBureau, "Запрос кредитной\nистории клиента", "HTTPS/REST")
+
+Rel(creditAppService, creditIntegration, "Отправка заявок\nв Кредитный конвейер\nи АБС, отправка СМС", "внутрипроцессный\n/ REST")
+Rel(offerService, batchProcessor, "Запуск ночного\nbatch-расчёта\nпо расписанию", "внутрипроцессный")
+
+Rel(creditIntegration, kafkaAdapter, "Передача заявок\nдля записи в АБС,\nполучение результатов", "Kafka\n(асинхронно)")
+Rel(creditIntegration, camundaEngine, "Передача предодобренных\nзаявок напрямую\nв Кредитный конвейер", "Kafka\n(асинхронно)")
+
+Rel(kafkaAdapter, absDb, "Запись кредитных заявок\nиз Kafka, чтение\nрезультатов через JDBC", "JDBC")
+Rel(absDesktop, absDb, "Чтение заявок,\nсоздание новых заявок\nв отделении", "прямое\nподключение")
+
+Rel(camundaEngine, conveyorDb, "Чтение/запись заявок,\nбизнес-процессы", "JDBC")
+Rel(conveyorDb, absDb, "Ежедневная синхронизация\nобычных заявок и\nодобренных кредитов", "БД\n(раз в сутки)")
+
+Rel(backOfficeCredit, camundaEngine, "Обрабатывает заявки,\nпринимает решение", "HTTPS")
+Rel(branchManager, absDesktop, "Подаёт заявку,\nпродолжает работу\nс заявкой с сайта", "десктоп")
+
+Rel(creditIntegration, smsGateway, "Отправка СМС-кодов\nи уведомлений\nо статусе заявки", "SMPP/HTTP")
+
+
+Lay_R(newClient, existingClient)
+Lay_D(newClient, website)
+Lay_D(existingClient, creditModule)
+Lay_R(internetBankBoundary, creditServiceBoundary)
+Lay_D(creditServiceBoundary, absAdapterBoundary)
+Lay_R(absAdapterBoundary, absBoundary)
+Lay_D(absBoundary, branchManager)
+Lay_R(creditServiceBoundary, creditConveyorBoundary)
+Lay_D(creditConveyorBoundary, backOfficeCredit)
+Lay_R(creditServiceBoundary, scoringBoundary)
+Lay_R(scoringBoundary, creditBureau)
+Lay_D(creditServiceBoundary, smsGateway)
+
+@enduml

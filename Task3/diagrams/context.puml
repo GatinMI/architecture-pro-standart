@@ -1,0 +1,50 @@
+@startuml context
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/refs/heads/master/C4_Context.puml
+
+title Диаграмма контекста — MVP онлайн-открытия депозитов, банк «Стандарт»
+
+Person(newClient, "Новый клиент", "Потенциальный клиент банка без учётной записи в интернет-банке.\nМожет просматривать депозиты и подавать заявку через сайт")
+Person(existingClient, "Существующий клиент", "Клиент банка с доступом к интернет-банку.\nМожет просматривать персонализированные ставки и подавать заявки онлайн")
+Person(backOfficeDeposit, "Менеджер бэк-офиса\n(депозиты)", "Сотрудник управления обслуживания депозитных продуктов.\nОбрабатывает заявки на депозит в АБС,\nвносит ставки в Oracle БД")
+Person(backOfficeCredit, "Менеджер бэк-офиса\n(кредиты)", "Сотрудник управления обслуживания кредитных продуктов.\nЕжедневно рассчитывает ставки по депозитам\nна основе кредитного риска банка.\nСогласовывает специальные ставки\nдля клиентов с крупными остатками")
+Person(callCenterAgent, "Оператор кол-центра", "Оператор банка.\nОбрабатывает заявки на депозит с сайта и связывается с клиентом")
+
+System(depositSystem, "Сервис депозитов\n(новый)", "Новый микросервис на Java Spring Boot.\nУправление ставками, приём заявок с сайта и интернет-банка,\nрасчёт персонализированных ставок, СМС-подтверждение,\nинтеграция с кол-центром и СМС-шлюзом")
+
+System(absAdapter, "Адаптер АБС\n(новый)", "Отдельный Java-сервис вне контура АБС.\nМост между Kafka и Oracle БД АБС.\nЗапись заявок в БД, чтение результатов\nобработки через JDBC.\nНе требует изменений в Delphi/PL-SQL коде АБС")
+
+System(internetBank, "Интернет-банк", "Клиент-серверная система на ASP.NET MVC 4.5,\n.NET Framework 4.5, MS SQL.\nМонолит на платформе подрядчика.\nДополняется новым модулем депозитов (React.js SPA)")
+System(abs, "Автоматизированная\nбанковская система (АБС)", "Десктоп-клиент на Delphi, СУБД Oracle,\nлогика на PL/SQL.\nОсновная система учёта операций и бухгалтерии.\nНа MVP — обработка заявок на депозит\nбэк-офисом. Без изменений в коде Delphi/PL-SQL")
+System(callCenter, "Система кол-центра", "Платформа подрядчика: React.js +\nJava Spring Boot + PostgreSQL.\nМикросервисная архитектура.\nПолучает заявки на депозит с сайта")
+System(website, "Сайт банка", "Собственная разработка: PHP + React.js.\nДополняется функционалом отображения\nдепозитов и подачи заявок")
+
+System_Ext(smsGateway, "СМС-шлюз\nтелеком-оператора", "Внешний шлюз отправки СМС.\nИспользуется для СМС-кодов\nподтверждения и уведомлений клиентов")
+
+Rel(newClient, website, "Просматривает депозиты\nи подаёт заявку", "HTTPS")
+Rel(existingClient, internetBank, "Просматривает депозиты,\nперсонализированные ставки\nи подаёт заявку", "HTTPS")
+
+Rel(website, depositSystem, "Передаёт заявку на депозит,\nзапрашивает актуальные ставки", "HTTPS/REST")
+Rel(internetBank, depositSystem, "Передаёт заявку на депозит,\nзапрашивает ставки и\nперсонализированные условия", "HTTPS/REST")
+
+Rel(depositSystem, absAdapter, "Передаёт заявки на обработку,\nполучает результаты и\nданные для расчёта ставок", "Kafka\n(асинхронно)")
+Rel(absAdapter, abs, "Запись заявок в Oracle БД,\nчтение результатов обработки\nчерез JDBC", "JDBC")
+Rel(depositSystem, callCenter, "Передаёт заявки с сайта\nдля обработки оператором", "HTTPS/REST")
+Rel(depositSystem, smsGateway, "Отправка СМС-кодов\nподтверждения и уведомлений", "SMPP/HTTP")
+
+Rel(callCenterAgent, callCenter, "Обрабатывает заявки\nс сайта, связывается\nс клиентом", "HTTPS")
+Rel(backOfficeDeposit, abs, "Обрабатывает заявки\nна депозит, вносит\nставки в Oracle БД", "Десктоп")
+Rel(backOfficeCredit, backOfficeDeposit, "Анализирует кредитный риск,\nрассчитывает ставки\nпо депозитам", "Десктоп")
+
+Lay_R(newClient, existingClient)
+Lay_D(newClient, website)
+Lay_D(existingClient, internetBank)
+Lay_R(website, internetBank)
+Lay_D(website, depositSystem)
+Lay_R(depositSystem, absAdapter)
+Lay_R(absAdapter, abs)
+Lay_D(depositSystem, callCenter)
+Lay_R(callCenter, smsGateway)
+Lay_D(abs, backOfficeDeposit)
+Lay_R(backOfficeDeposit, backOfficeCredit)
+
+@enduml

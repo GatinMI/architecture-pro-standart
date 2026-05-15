@@ -1,0 +1,39 @@
+@startuml context_call_center
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/refs/heads/master/C4_Context.puml
+
+title Диаграмма контекста — Доступ кол-центров к ставкам по депозитам, банк «Стандарт»
+
+Person(callCenterAgent, "Оператор кол-центра\nбанка", "Оператор банка (200 человек).\nКонсультирует клиентов по телефону,\nиспользует актуальные ставки\nдля ответов на вопросы о депозитах")
+Person(partnerCallCenterAgent, "Оператор партнёрского\nкол-центра", "Оператор партнёрского кол-центра\n(100 человек).\nКонсультирует клиентов по телефону,\nиспользует актуальные ставки\nиз файлов, полученных по SFTP")
+Person(backOfficeDeposit, "Менеджер бэк-офиса\n(депозиты)", "Сотрудник управления депозитов.\nОбновляет ставки в АБС,\nкоторые затем попадают\nв Сервис депозитов")
+
+System(depositSystem, "Сервис депозитов\n(новый)", "Микросервис на Java Spring Boot.\nЕдиный источник актуальных ставок.\nПредоставляет REST API ставок\nдля системы кол-центра.\nЭкспортирует ставки в CSV-файлы\nдля партнёрского кол-центра")
+
+System(callCenter, "Система кол-центра\nбанка", "Платформа подрядчика:\nReact.js + Java Spring Boot +\nPostgreSQL. Микросервисная.\nПолучает ставки через REST API\nот Сервиса депозитов.\nОтображает ставки операторам")
+
+System(sftpServer, "SFTP-сервер\n(новый)", "Сервер в DMZ-зоне банка.\nOpenSSH SFTP.\nХранит CSV-файлы с актуальными\nставками для скачивания\nпартнёрским кол-центром.\nАутентификация по SSH-ключам")
+
+System_Ext(partnerCallCenter, "Система партнёрского\nкол-центра", "Внешняя система партнёра.\nНе может делать API-вызовы\nк системам банка.\nПолучает файлы ставок\nчерез SFTP. Отображает\nставки своим операторам")
+
+System(abs, "АБС", "Автоматизированная банковская\nсистема. Источник ставок\n(через Kafka → Сервис депозитов).\nБез изменений для данного кейса")
+
+Rel(callCenterAgent, callCenter, "Консультирует клиентов,\nвидит актуальные ставки\nв интерфейсе", "HTTPS")
+Rel(callCenter, depositSystem, "Запрашивает актуальные\nставки по депозитам", "HTTPS/REST API\n(TLS)")
+
+Rel(depositSystem, sftpServer, "Экспортирует CSV-файлы\nсо ставками по расписанию", "SFTP\n(SSH)")
+Rel(partnerCallCenter, sftpServer, "Скачивает CSV-файлы\nсо ставками по расписанию", "SFTP\n(SSH)")
+Rel(partnerCallCenterAgent, partnerCallCenter, "Консультирует клиентов,\nвидит ставки из файлов", "внутренний\nдоступ")
+
+Rel(backOfficeDeposit, abs, "Обновляет ставки\nв Oracle БД", "Десктоп")
+Rel(abs, depositSystem, "Передача обновлённых\nставок через Kafka", "Kafka\n(асинхронно)")
+
+Lay_R(callCenterAgent, partnerCallCenterAgent)
+Lay_D(callCenterAgent, callCenter)
+Lay_D(partnerCallCenterAgent, partnerCallCenter)
+Lay_R(callCenter, depositSystem)
+Lay_D(depositSystem, sftpServer)
+Lay_R(sftpServer, partnerCallCenter)
+Lay_D(callCenter, abs)
+Lay_R(abs, backOfficeDeposit)
+
+@enduml
