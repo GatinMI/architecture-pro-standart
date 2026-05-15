@@ -1,0 +1,81 @@
+@startuml containers
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/refs/heads/master/C4_Container.puml
+
+title Диаграмма контейнеров — MVP онлайн-открытия депозитов, банк «Стандарт»
+
+
+Person(newClient, "Новый клиент", "Потенциальный клиент без учётной записи")
+Person(existingClient, "Существующий клиент", "Клиент с доступом к интернет-банку")
+Person(backOfficeDeposit, "Менеджер бэк-офиса\n(депозиты)", "Обрабатывает заявки на депозит,\nвносит ставки в АБС")
+Person(backOfficeCredit, "Менеджер бэк-офиса\n(кредиты)", "Рассчитывает ставки по депозитам\nна основе кредитного риска.\nСогласовывает специальные ставки")
+Person(callCenterAgent, "Оператор кол-центра", "Обрабатывает заявки с сайта")
+
+
+System_Boundary(internetBankBoundary, "Интернет-банк") {
+    Container(internetBankMonolith, "Монолит интернет-банка", "ASP.NET MVC 4.5,\n.NET Framework 4.5,\nMS SQL", "Существующая система на платформе подрядчика.\nАвторизация, платежи, текущие счета.\nСодержит ядро СМС-функционала")
+    Container(depositModule, "Модуль депозитов (новый)", "React.js SPA", "Новый интерфейс для работы с депозитами.\nКаталог депозитов, персонализированные ставки,\nформа заявки, ввод СМС-кода, статус заявки.\nВстраивается в интернет-банк через iframe")
+}
+
+System_Boundary(depositServiceBoundary, "Сервис депозитов (новый)") {
+    Container(apiGateway, "API Gateway", "Java Spring Boot", "Единая точка входа.\nМаршрутизация запросов,\nаутентификация, rate limiting")
+    Container(rateService, "Сервис ставок", "Java Spring Boot", "CRUD ставок по депозитам.\nРасчёт персонализированных ставок.\nЕжедневное обновление из АБС через Kafka")
+    Container(applicationService, "Сервис заявок", "Java Spring Boot", "Жизненный цикл заявки:\nсоздание, валидация СМС-кода,\nсмена статуса, уведомления")
+    ContainerDb(depositDb, "PostgreSQL", "PostgreSQL", "База данных Сервиса депозитов.\nТаблицы: ставки, заявки,\nСМС-коды, кэш\nперсонализированных ставок")
+    Container(integrationAdapter, "Интеграционный адаптер", "Java Spring Boot +\nSpring Kafka", "Асинхронная интеграция с АБС\nчерез Kafka (продюсер/консьюмер).\nREST-клиент к системе кол-центра\nи СМС-шлюзу")
+}
+
+System_Boundary(absBoundary, "Автоматизированная банковская система (АБС)") {
+    Container(absDesktop, "Десктоп-клиент", "Delphi", "Интерфейс бэк-офиса депозитов и кредитов.\nРаботает с Oracle БД напрямую.\nБэк-офис видит заявки из онлайн-каналов\nв новых таблицах/представлениях БД.\nКредитные специалисты работают\nсо своим разделом для расчёта ставок")
+    ContainerDb(absDb, "Oracle БД", "Oracle + PL/SQL", "Основная БД банка.\nУчёт операций, бухгалтерия,\nданные клиентов.\nДополнена таблицами заявок\nна депозит из онлайн-каналов.\nРазделённый доступ: депозиты и кредиты\nв разных схемах/представлениях")
+}
+
+
+System_Boundary(absAdapterBoundary, "Адаптер АБС (новый, вне контура АБС)") {
+    Container(kafkaAdapter, "Адаптер Kafka → Oracle", "Java Spring Boot +\nJDBC + Spring Kafka", "Консьюмер: получение заявок из Kafka\nи запись в Oracle БД АБС через JDBC.\nПродюсер: чтение результатов обработки\nиз Oracle БД и отправка в Kafka.\nНе требует изменений в Delphi/PL-SQL коде АБС")
+}
+
+Container(website, "Сайт банка", "PHP + React.js", "Существующий сайт.\nДополнен каталогом депозитов\nи формой подачи заявки")
+Container(callCenter, "Система кол-центра", "React.js + Java Spring Boot\n+ PostgreSQL", "Платформа подрядчика.\nПолучает заявки на депозит с сайта.\nМикросервисная архитектура")
+System_Ext(smsGateway, "СМС-шлюз\nтелеком-оператора", "Внешний SMPP/HTTP шлюз.\nОтправка СМС-кодов\nи уведомлений")
+
+Rel(newClient, website, "Просматривает депозиты\nи подаёт заявку", "HTTPS")
+Rel(existingClient, depositModule, "Работает с депозитами\nчерез новый модуль", "HTTPS")
+
+Rel(depositModule, apiGateway, "Запросы к Сервису депозитов:\nставки, заявки, СМС-код", "HTTPS/REST")
+Rel(depositModule, internetBankMonolith, "Делегирование авторизации\nи получение данных клиента", "внутренний вызов")
+
+Rel(website, apiGateway, "Запрос ставок,\nпередача заявки", "HTTPS/REST")
+
+Rel(apiGateway, rateService, "Запрос ставок\nи персонализированных условий", "внутрипроцессный\n/ REST")
+Rel(apiGateway, applicationService, "Создание заявки,\nвалидация СМС-кода", "внутрипроцессный\n/ REST")
+Rel(rateService, depositDb, "Чтение/запись ставок,\nкэш персонализированных ставок", "JDBC")
+Rel(applicationService, depositDb, "Чтение/запись заявок,\nСМС-кодов", "JDBC")
+Rel(applicationService, integrationAdapter, "Отправка заявок в АБС,\nотправка СМС", "внутрипроцессный\n/ REST")
+Rel(rateService, integrationAdapter, "Запрос данных\nиз АБС для расчёта ставок", "внутрипроцессный\n/ REST")
+
+Rel(integrationAdapter, kafkaAdapter, "Передача заявок,\nполучение результатов\nобработки и данных\nдля расчёта ставок", "Kafka\n(асинхронно)")
+
+Rel(kafkaAdapter, absDb, "Запись заявок из Kafka,\nчтение результатов обработки\nи данных для расчёта ставок", "JDBC")
+
+Rel(absDesktop, absDb, "Чтение заявок,\nобработка, подтверждение\nставок и условий", "прямое\nподключение")
+Rel(backOfficeDeposit, absDesktop, "Обрабатывает заявки\nна депозит, вносит ставки", "десктоп")
+Rel(backOfficeCredit, backOfficeDeposit, "Анализирует кредитный риск,\nрассчитывает ставки\nпо депозитам", "десктоп")
+
+Rel(integrationAdapter, callCenter, "Передача заявок\nс сайта", "HTTPS/REST")
+Rel(callCenterAgent, callCenter, "Обработка заявок,\nсвязь с клиентом", "HTTPS")
+
+Rel(integrationAdapter, smsGateway, "Отправка СМС-кодов\nи уведомлений", "SMPP/HTTP")
+
+
+Lay_R(newClient, existingClient)
+Lay_D(newClient, website)
+Lay_D(existingClient, depositModule)
+Lay_R(internetBankBoundary, depositServiceBoundary)
+Lay_D(depositServiceBoundary, absAdapterBoundary)
+Lay_R(absAdapterBoundary, absBoundary)
+Lay_D(absBoundary, backOfficeDeposit)
+Lay_R(backOfficeDeposit, backOfficeCredit)
+Lay_D(backOfficeDeposit, callCenter)
+Lay_R(callCenter, smsGateway)
+
+@enduml
